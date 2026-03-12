@@ -1,0 +1,113 @@
+@IsTest
+private class LeadSyncSchedulerTest {
+
+    @TestSetup
+    static void setup() {
+        insert new Lead_Sync_Cursor__c(
+            Name = 'Main Cursor',
+            Last_Processed_Date__c = DateTime.newInstance(2026, 1, 1, 0, 0, 0),
+            IsRunning__c = false
+        );
+    }
+
+    @IsTest
+    static void encolaQueueableCuandoNoHayProcesoCorriendo() {
+        resetQueueableHooks();
+
+        LeadSyncQueueable.TEST_MODE = true;
+        LeadSyncQueueable.TEST_DISABLE_REQUEUE = true;
+        LeadSyncQueueable.TEST_SKIP_UPSERT = true;
+        LeadSyncQueueable.TEST_NEXT_AVAILABLE_DATE = null;
+
+        new LeadSyncScheduler().execute(null);
+
+        Integer jobs = [
+            SELECT Count()
+            FROM AsyncApexJob
+            WHERE JobType = 'Queueable'
+            AND ApexClass.Name = 'LeadSyncQueueable'
+        ];
+
+        Lead_Sync_Cursor__c cursor = [
+            SELECT IsRunning__c
+            FROM Lead_Sync_Cursor__c
+            WHERE Name = 'Main Cursor'
+            LIMIT 1
+        ];
+
+        System.assertEquals(1, jobs, 'El scheduler debe encolar un queueable.');
+        System.assertEquals(
+            true,
+            cursor.IsRunning__c,
+            'El scheduler debe dejar el lock tomado despues de encolar el queueable.'
+        );
+    }
+
+    @IsTest
+    static void noEncolaSiYaHayProcesoCorriendo() {
+        resetQueueableHooks();
+
+        Lead_Sync_Cursor__c cursor = [
+            SELECT Id, IsRunning__c
+            FROM Lead_Sync_Cursor__c
+            WHERE Name = 'Main Cursor'
+            LIMIT 1
+        ];
+        cursor.IsRunning__c = true;
+        update cursor;
+
+        new LeadSyncScheduler().execute(null);
+
+        Integer jobs = [
+            SELECT Count()
+            FROM AsyncApexJob
+            WHERE JobType = 'Queueable'
+            AND ApexClass.Name = 'LeadSyncQueueable'
+        ];
+
+        Lead_Sync_Cursor__c refreshed = [
+            SELECT IsRunning__c
+            FROM Lead_Sync_Cursor__c
+            WHERE Name = 'Main Cursor'
+            LIMIT 1
+        ];
+
+        System.assertEquals(0, jobs, 'No debe encolar nada si el proceso ya esta corriendo.');
+        System.assertEquals(true, refreshed.IsRunning__c);
+    }
+
+    @IsTest
+    static void liberaLockSiEnqueueFalla() {
+        resetQueueableHooks();
+        LeadSyncScheduler.TEST_FORCE_ENQUEUE_EXCEPTION = true;
+
+        try {
+            new LeadSyncScheduler().execute(null);
+            System.assert(false, 'Debio lanzar una excepcion.');
+        } catch (Exception e) {
+            System.assertNotEquals(null, e);
+        }
+
+        Lead_Sync_Cursor__c cursor = [
+            SELECT IsRunning__c
+            FROM Lead_Sync_Cursor__c
+            WHERE Name = 'Main Cursor'
+            LIMIT 1
+        ];
+
+        System.assertEquals(false, cursor.IsRunning__c);
+    }
+
+    private static void resetQueueableHooks() {
+        LeadSyncQueueable.TEST_MODE = false;
+        LeadSyncQueueable.TEST_NEXT_AVAILABLE_DATE = null;
+        LeadSyncQueueable.TEST_PROBE_ROWS = null;
+        LeadSyncQueueable.TEST_PREFIX_ROWS = null;
+        LeadSyncQueueable.TEST_DISABLE_REQUEUE = false;
+        LeadSyncQueueable.TEST_SKIP_UPSERT = false;
+        LeadSyncQueueable.TEST_ROW_MAPS = null;
+        LeadSyncQueueable.TEST_CAPTURED_LEADS_WITH_SELLER = null;
+        LeadSyncQueueable.TEST_CAPTURED_LEADS_WITHOUT_SELLER = null;
+        LeadSyncScheduler.TEST_FORCE_ENQUEUE_EXCEPTION = false;
+    }
+}

@@ -1,0 +1,38 @@
+@IsTest
+private class LeadSyncCursorTest {
+
+    @TestSetup
+    static void setup() {
+        insert new Lead_Sync_Cursor__c(
+            Name = 'Main Cursor',
+            Last_Processed_Date__c = DateTime.newInstance(2026, 1, 1, 0, 0, 0),
+            IsRunning__c = false
+        );
+    }
+
+    @IsTest
+    static void testGetAndUpdateCursor() {
+        Test.startTest();
+
+        DateTime dt = LeadSyncCursor.getLastDate();
+        String uuid = LeadSyncCursor.getLastUUID();
+
+        System.assertEquals(Date.newInstance(2026, 1, 1), dt.date());
+        System.assertEquals(null, uuid);
+
+        DateTime newDt = DateTime.newInstance(2026, 1, 5, 0, 0, 0);
+        LeadSyncCursor.updateCursor(newDt, 'PFX:0');
+
+        Test.stopTest();
+
+        Lead_Sync_Cursor__c cur = [
+            SELECT Last_Processed_Date__c, Last_Processed_UUID__c
+            FROM Lead_Sync_Cursor__c
+            WHERE Name = 'Main Cursor'
+            LIMIT 1
+        ];
+
+        System.assertEquals(Date.newInstance(2026, 1, 5), cur.Last_Processed_Date__c.date());
+        System.assertEquals('PFX:0', cur.Last_Processed_UUID__c);
+    }
+}

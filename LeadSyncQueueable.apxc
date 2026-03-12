@@ -1,0 +1,348 @@
+public class LeadSyncQueueable implements Queueable, Database.AllowsCallouts {
+
+    private static final Integer CHUNK_SIZE = 2000;
+    private static final Integer MAX_PREFIX_DEPTH = 2;
+
+    private static final String ID_FERNANDA = '0053t00000B9b7MAAR';
+    private static final String ID_DAYA     = '005Pc000000hN9RIAU';
+    private static final String ID_DEJAIMES = '0053t000008nvJAAAY';
+    private static final String ID_SANDRA   = '005Pc000009wzU9IAI';
+
+    private static final String HEX = '0123456789abcdef';
+
+    @TestVisible private static Boolean TEST_MODE = false;
+    @TestVisible private static Date TEST_NEXT_AVAILABLE_DATE;
+    @TestVisible private static List<SObject> TEST_PROBE_ROWS;
+    @TestVisible private static List<SObject> TEST_PREFIX_ROWS;
+    @TestVisible private static Boolean TEST_DISABLE_REQUEUE = false;
+    @TestVisible private static Boolean TEST_SKIP_UPSERT = false;
+    @TestVisible private static List<Map<String, Object>> TEST_ROW_MAPS;
+    @TestVisible private static List<Lead> TEST_CAPTURED_LEADS_WITH_SELLER;
+    @TestVisible private static List<Lead> TEST_CAPTURED_LEADS_WITHOUT_SELLER;
+
+    public void execute(QueueableContext context) {
+        try {
+            DateTime cursorDt = LeadSyncCursor.getLastDate();
+            Date baseDate = (cursorDt != null) ? cursorDt.date() : Date.newInstance(2020, 1, 1);
+
+            String token = LeadSyncCursor.getLastUUID();
+            if (token == null) token = '';
+            token = token.trim();
+
+            Boolean prefixMode = token.toLowerCase().startsWith('pfx:');
+            String prefix = prefixMode ? token.substring(4).toLowerCase() : '';
+
+            Date processDate = baseDate;
+
+            if (!prefixMode) {
+                processDate = findNextAvailableDate(baseDate);
+
+                if (processDate == null) {
+                    System.debug('LeadSyncQueueable: no hay más registros.');
+                    releaseLock();
+                    return;
+                }
+            }
+
+            // Modo normal: procesa un día completo si entra en un chunk
+            if (!prefixMode) {
+                List<SObject> probe;
+                if (TEST_MODE) {
+                    probe = (TEST_PROBE_ROWS == null) ? new List<SObject>() : TEST_PROBE_ROWS;
+                } else {
+                    probe = Database.query(
+                        'SELECT uuid__c, nombre__c, correo__c, telefono__c, seller_id__c, ' +
+                        '       categoria__c, etapa_funnel__c, madurez_digital__c, tier__c, ' +
+                        '       fecha_registro__c ' +
+                        'FROM MUESTRA_FF_Reducidocsv__dlm ' +
+                        'WHERE fecha_registro__c = :processDate ' +
+                        'ORDER BY uuid__c ASC ' +
+                        'LIMIT :CHUNK_SIZE'
+                    );
+                }
+
+                if (probe.isEmpty()) {
+                    LeadSyncCursor.updateCursor(
+                        DateTime.newInstance(processDate.addDays(1), Time.newInstance(0, 0, 0, 0)),
+                        ''
+                    );
+
+                    if (!TEST_MODE || !TEST_DISABLE_REQUEUE) {
+                        System.enqueueJob(new LeadSyncQueueable());
+                    }
+                    return;
+                }
+
+                if (probe.size() < CHUNK_SIZE) {
+                    upsertLeadsFromRows(probe);
+
+                    LeadSyncCursor.updateCursor(
+                        DateTime.newInstance(processDate.addDays(1), Time.newInstance(0, 0, 0, 0)),
+                        ''
+                    );
+
+                    if (!TEST_MODE || !TEST_DISABLE_REQUEUE) {
+                        System.enqueueJob(new LeadSyncQueueable());
+                    }
+                    return;
+                }
+
+                // Si el día trae exactamente CHUNK_SIZE, entra a modo prefijos
+                LeadSyncCursor.updateCursor(
+                    DateTime.newInstance(processDate, Time.newInstance(0, 0, 0, 0)),
+                    'PFX:0'
+                );
+
+                if (!TEST_MODE || !TEST_DISABLE_REQUEUE) {
+                    System.enqueueJob(new LeadSyncQueueable());
+                }
+                return;
+            }
+
+            // Modo prefijos: procesa buckets del mismo día
+            if (String.isBlank(prefix) || !isHexPrefix(prefix)) {
+                prefix = '0';
+            }
+
+            String likePattern = prefix + '%';
+
+            List<SObject> rows;
+            if (TEST_MODE) {
+                rows = (TEST_PREFIX_ROWS == null) ? new List<SObject>() : TEST_PREFIX_ROWS;
+            } else {
+                rows = Database.query(
+                    'SELECT uuid__c, nombre__c, correo__c, telefono__c, seller_id__c, ' +
+                    '       categoria__c, etapa_funnel__c, madurez_digital__c, tier__c, ' +
+                    '       fecha_registro__c ' +
+                    'FROM MUESTRA_FF_Reducidocsv__dlm ' +
+                    'WHERE fecha_registro__c = :processDate AND uuid__c LIKE :likePattern ' +
+                    'ORDER BY uuid__c ASC ' +
+                    'LIMIT :CHUNK_SIZE'
+                );
+            }
+
+            if (rows.size() == CHUNK_SIZE) {
+                if (prefix.length() < MAX_PREFIX_DEPTH) {
+                    LeadSyncCursor.updateCursor(
+                        DateTime.newInstance(processDate, Time.newInstance(0, 0, 0, 0)),
+                        'PFX:' + (prefix + '0')
+                    );
+
+                    if (!TEST_MODE || !TEST_DISABLE_REQUEUE) {
+                        System.enqueueJob(new LeadSyncQueueable());
+                    }
+                    return;
+                } else {
+                    releaseLock();
+                    throw new AuraHandledException(
+                        'Bucket demasiado grande para prefix=' + prefix +
+                        '. Subí MAX_PREFIX_DEPTH o revisá distribución de uuid.'
+                    );
+                }
+            }
+
+            if (!rows.isEmpty()) {
+                upsertLeadsFromRows(rows);
+            }
+
+            String nextPrefix = nextPrefixAfterComplete(prefix);
+
+            if (nextPrefix == null) {
+                LeadSyncCursor.updateCursor(
+                    DateTime.newInstance(processDate.addDays(1), Time.newInstance(0, 0, 0, 0)),
+                    ''
+                );
+            } else {
+                LeadSyncCursor.updateCursor(
+                    DateTime.newInstance(processDate, Time.newInstance(0, 0, 0, 0)),
+                    'PFX:' + nextPrefix
+                );
+            }
+
+            if (!TEST_MODE || !TEST_DISABLE_REQUEUE) {
+                System.enqueueJob(new LeadSyncQueueable());
+            }
+
+        } catch (Exception e) {
+            System.debug('LeadSyncQueueable ERROR: ' + e.getMessage());
+            System.debug(e.getStackTraceString());
+            releaseLock();
+            throw e;
+        }
+    }
+
+    private static Date findNextAvailableDate(Date fromDate) {
+        if (TEST_MODE) {
+            return TEST_NEXT_AVAILABLE_DATE;
+        }
+
+        List<SObject> r = Database.query(
+            'SELECT fecha_registro__c ' +
+            'FROM MUESTRA_FF_Reducidocsv__dlm ' +
+            'WHERE fecha_registro__c >= :fromDate AND fecha_registro__c != null ' +
+            'ORDER BY fecha_registro__c ASC ' +
+            'LIMIT 1'
+        );
+
+        if (r.isEmpty()) return null;
+        return (Date) r[0].get('fecha_registro__c');
+    }
+
+    private static Boolean isHexPrefix(String p) {
+        if (String.isBlank(p)) return false;
+        p = p.toLowerCase();
+
+        for (Integer i = 0; i < p.length(); i++) {
+            if (HEX.indexOf(p.substring(i, i + 1)) < 0) return false;
+        }
+        return true;
+    }
+
+    private static String nextPrefixAfterComplete(String prefix) {
+        prefix = prefix.toLowerCase();
+
+        String last = prefix.substring(prefix.length() - 1);
+
+        if (last != 'f') {
+            Integer idx = HEX.indexOf(last);
+            String next = HEX.substring(idx + 1, idx + 2);
+            return prefix.substring(0, prefix.length() - 1) + next;
+        }
+
+        if (prefix.length() == 1) {
+            return null;
+        }
+
+        return nextPrefixAfterComplete(prefix.substring(0, prefix.length() - 1));
+    }
+
+    private static void upsertLeadsFromRows(List<SObject> rows) {
+        List<Lead> leadsConSeller = new List<Lead>();
+        List<Lead> leadsSinSeller = new List<Lead>();
+
+        Integer rrCounter = 0;
+
+        for (Integer i = 0; i < rows.size(); i++) {
+            SObject record = rows[i];
+
+            Object uuidRaw        = getFieldValue(record, i, 'uuid__c');
+            Object nombreRaw      = getFieldValue(record, i, 'nombre__c');
+            Object correoRaw      = getFieldValue(record, i, 'correo__c');
+            Object telefonoRaw    = getFieldValue(record, i, 'telefono__c');
+            Object categoriaRaw   = getFieldValue(record, i, 'categoria__c');
+            Object etapaRaw       = getFieldValue(record, i, 'etapa_funnel__c');
+            Object madurezRaw     = getFieldValue(record, i, 'madurez_digital__c');
+            Object tierRaw        = getFieldValue(record, i, 'tier__c');
+
+            String uuidVal        = (uuidRaw != null) ? String.valueOf(uuidRaw) : null;
+            String nombre         = (nombreRaw != null) ? String.valueOf(nombreRaw) : null;
+            String correo         = (correoRaw != null) ? String.valueOf(correoRaw) : null;
+            String telefono       = (telefonoRaw != null) ? String.valueOf(telefonoRaw) : null;
+            String categoria      = (categoriaRaw != null) ? String.valueOf(categoriaRaw) : null;
+            String etapaFunnel    = (etapaRaw != null) ? String.valueOf(etapaRaw) : null;
+            String madurezDigital = (madurezRaw != null) ? String.valueOf(madurezRaw) : null;
+            String tier           = (tierRaw != null) ? String.valueOf(tierRaw) : null;
+
+            Object sellerObj = getFieldValue(record, i, 'seller_id__c');
+            String sellerId = null;
+            if (sellerObj != null) {
+                if (sellerObj instanceof Decimal) {
+                    sellerId = String.valueOf(((Decimal) sellerObj).longValue());
+                } else {
+                    sellerId = String.valueOf(sellerObj);
+                    if (sellerId.endsWith('.0')) {
+                        sellerId = sellerId.substring(0, sellerId.length() - 2);
+                    }
+                }
+            }
+
+            Lead l = new Lead();
+            l.id_externo_migracion__c          = uuidVal;
+            l.LastName                         = String.isNotBlank(nombre) ? nombre : 'Sin Nombre';
+            l.Nombre_completo__c               = nombre;
+            l.Email                            = correo;
+            l.Phone                            = telefono;
+            l.categoria__c                     = categoria;
+            l.Etapa_funnel__c                  = etapaFunnel;
+            l.Madurez_Digital_POC__c           = madurezDigital;
+            l.Tier__c                          = tier;
+            l.LeadSource                       = 'Hunting';
+            l.Company                          = 'POCHunting';
+            l.RecordTypeId                     = '012dx000001duWPAAY';
+            l.Identification_Name_poc__c       = 'sellerId';
+            l.party_Identification_Type_poc__c = 'sellerId';
+
+            Boolean esFernanda =
+                (tier == 'Tier 1' || tier == 'Tier 2') &&
+                (categoria == 'Construcción e Industrias' || categoria == 'Hogar y Muebles');
+
+            if (esFernanda) {
+                l.OwnerId = ID_FERNANDA;
+            } else {
+                if (rrCounter == 0) {
+                    l.OwnerId = ID_DAYA;
+                    rrCounter = 1;
+                } else if (rrCounter == 1) {
+                    l.OwnerId = ID_DEJAIMES;
+                    rrCounter = 2;
+                } else {
+                    l.OwnerId = ID_SANDRA;
+                    rrCounter = 0;
+                }
+            }
+
+            if (String.isNotBlank(sellerId)) {
+                l.SellerId__c                   = sellerId;
+                l.Identification_Number_poc__c = sellerId;
+                leadsConSeller.add(l);
+            } else {
+                leadsSinSeller.add(l);
+            }
+        }
+
+        if (TEST_MODE && TEST_SKIP_UPSERT) {
+            TEST_CAPTURED_LEADS_WITH_SELLER = leadsConSeller.deepClone(true, true, true);
+            TEST_CAPTURED_LEADS_WITHOUT_SELLER = leadsSinSeller.deepClone(true, true, true);
+            return;
+        }
+
+        Schema.SObjectField extIdField = Lead.Fields.id_externo_migracion__c;
+
+        if (!leadsConSeller.isEmpty()) {
+            Database.upsert(leadsConSeller, extIdField, false);
+        }
+
+        if (!leadsSinSeller.isEmpty()) {
+            Database.upsert(leadsSinSeller, extIdField, false);
+        }
+    }
+
+    private static Object getFieldValue(SObject record, Integer rowIndex, String fieldName) {
+        if (TEST_MODE && TEST_ROW_MAPS != null && rowIndex < TEST_ROW_MAPS.size()) {
+            return TEST_ROW_MAPS[rowIndex].get(fieldName);
+        }
+
+        try {
+            return record.get(fieldName);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static void releaseLock() {
+        try {
+            Lead_Sync_Cursor__c cur = [
+                SELECT Id, IsRunning__c
+                FROM Lead_Sync_Cursor__c
+                WHERE Name = 'Main Cursor'
+                LIMIT 1
+                FOR UPDATE
+            ];
+
+            cur.IsRunning__c = false;
+            update cur;
+        } catch (Exception e) {
+            System.debug('No se pudo liberar el lock: ' + e.getMessage());
+        }
+    }
+}

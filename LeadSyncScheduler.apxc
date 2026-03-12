@@ -1,0 +1,36 @@
+public class LeadSyncScheduler implements Schedulable {
+    @TestVisible private static Boolean TEST_FORCE_ENQUEUE_EXCEPTION = false;
+
+    public void execute(SchedulableContext sc) {
+        Lead_Sync_Cursor__c cur = [
+            SELECT Id, IsRunning__c
+            FROM Lead_Sync_Cursor__c
+            WHERE Name = 'Main Cursor'
+            LIMIT 1
+            FOR UPDATE
+        ];
+
+        if (cur.IsRunning__c == true) {
+            System.debug('LeadSyncScheduler: ya hay una ejecución en curso.');
+            return;
+        }
+
+        try {
+            cur.IsRunning__c = true;
+            update cur;
+
+            if (Test.isRunningTest() && TEST_FORCE_ENQUEUE_EXCEPTION) {
+                throw new AuraHandledException('Forced scheduler failure');
+            }
+
+            System.enqueueJob(new LeadSyncQueueable());
+
+        } catch (Exception e) {
+            cur.IsRunning__c = false;
+            update cur;
+
+            System.debug('LeadSyncScheduler ERROR: ' + e.getMessage());
+            throw e;
+        }
+    }
+}

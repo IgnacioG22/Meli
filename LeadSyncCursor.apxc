@@ -1,0 +1,30 @@
+public class LeadSyncCursor {
+
+    private static final String CURSOR_NAME = 'Main Cursor';
+
+    public static DateTime getLastDate() {
+        Lead_Sync_Cursor__c cursor = getCursor();
+        return cursor.Last_Processed_Date__c;
+    }
+
+    public static String getLastUUID() {
+        Lead_Sync_Cursor__c cursor = getCursor();
+        return cursor.Last_Processed_UUID__c;
+    }
+
+    public static void updateCursor(DateTime newDate, String newUUID) {
+        Lead_Sync_Cursor__c cursor = getCursor();
+        cursor.Last_Processed_Date__c = newDate;
+        cursor.Last_Processed_UUID__c = newUUID;
+        update cursor;
+    }
+
+    private static Lead_Sync_Cursor__c getCursor() {
+        return [
+            SELECT Id, Last_Processed_Date__c, Last_Processed_UUID__c, IsRunning__c
+            FROM Lead_Sync_Cursor__c
+            WHERE Name = :CURSOR_NAME
+            LIMIT 1
+        ];
+    }
+}
