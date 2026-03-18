@@ -5,25 +5,31 @@ private class LeadSyncCursorTest {
     static void setup() {
         insert new Lead_Sync_Cursor__c(
             Name = 'Main Cursor',
-            Last_Processed_Date__c = DateTime.newInstance(2026, 1, 1, 0, 0, 0),
+            Last_Processed_Date__c = DateTime.newInstance(2026, 1, 1, 12, 0, 0),
             IsRunning__c = false
         );
+
+        insert buildTestUser();
     }
 
     @IsTest
     static void testGetAndUpdateCursor() {
-        Test.startTest();
+        User testUser = getTestUser();
 
-        DateTime dt = LeadSyncCursor.getLastDate();
-        String uuid = LeadSyncCursor.getLastUUID();
+        System.runAs(testUser) {
+            Test.startTest();
 
-        System.assertEquals(Date.newInstance(2026, 1, 1), dt.date());
-        System.assertEquals(null, uuid);
+            DateTime dt = LeadSyncCursor.getLastDate();
+            String uuid = LeadSyncCursor.getLastUUID();
 
-        DateTime newDt = DateTime.newInstance(2026, 1, 5, 0, 0, 0);
-        LeadSyncCursor.updateCursor(newDt, 'PFX:0');
+            System.assertEquals(Date.newInstance(2026, 1, 1), dt.date());
+            System.assertEquals(null, uuid);
 
-        Test.stopTest();
+            DateTime newDt = DateTime.newInstance(2026, 1, 5, 0, 0, 0);
+            LeadSyncCursor.updateCursor(newDt, 'PFX:0');
+
+            Test.stopTest();
+        }
 
         Lead_Sync_Cursor__c cur = [
             SELECT Last_Processed_Date__c, Last_Processed_UUID__c
@@ -34,5 +40,46 @@ private class LeadSyncCursorTest {
 
         System.assertEquals(Date.newInstance(2026, 1, 5), cur.Last_Processed_Date__c.date());
         System.assertEquals('PFX:0', cur.Last_Processed_UUID__c);
+    }
+
+    private static User buildTestUser() {
+        String unique = String.valueOf(DateTime.now().getTime());
+        User testUser = new User(
+            Alias = 'tusr',
+            Email = 'testuser+' + unique + '@example.com',
+            EmailEncodingKey = 'UTF-8',
+            LastName = 'Test',
+            LanguageLocaleKey = 'en_US',
+            LocaleSidKey = 'en_US',
+            ProfileId = UserInfo.getProfileId(),
+            TimeZoneSidKey = 'America/Los_Angeles',
+            UserName = 'testuser+' + unique + '@example.com'
+        );
+
+        applyOrgSpecificUserDefaults(testUser);
+        return testUser;
+    }
+
+    private static User getTestUser() {
+        return [SELECT Id FROM User WHERE Alias = 'tusr' LIMIT 1];
+    }
+
+    private static void applyOrgSpecificUserDefaults(User testUser) {
+        Map<String, Schema.SObjectField> userFields = Schema.SObjectType.User.fields.getMap();
+        if (!userFields.containsKey('Business_Unit__c')) {
+            return;
+        }
+
+        Schema.DescribeFieldResult fieldDescribe = userFields.get('Business_Unit__c').getDescribe();
+        if (fieldDescribe.getType() == Schema.DisplayType.Picklist) {
+            for (Schema.PicklistEntry entry : fieldDescribe.getPicklistValues()) {
+                if (entry.isActive()) {
+                    testUser.put('Business_Unit__c', entry.getValue());
+                    return;
+                }
+            }
+        }
+
+        testUser.put('Business_Unit__c', 'Default');
     }
 }

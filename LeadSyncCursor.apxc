@@ -1,4 +1,4 @@
-public class LeadSyncCursor {
+public without sharing class LeadSyncCursor {
 
     private static final String CURSOR_NAME = 'Main Cursor';
 
@@ -16,7 +16,7 @@ public class LeadSyncCursor {
         Lead_Sync_Cursor__c cursor = getCursor();
         cursor.Last_Processed_Date__c = newDate;
         cursor.Last_Processed_UUID__c = newUUID;
-        update cursor;
+        update as system cursor;
     }
 
     private static Lead_Sync_Cursor__c getCursor() {

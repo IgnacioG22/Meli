@@ -38,13 +38,11 @@ public class LeadSyncQueueable implements Queueable, Database.AllowsCallouts {
                 processDate = findNextAvailableDate(baseDate);
 
                 if (processDate == null) {
-                    System.debug('LeadSyncQueueable: no hay más registros.');
                     releaseLock();
                     return;
                 }
             }
 
-            // Modo normal: procesa un día completo si entra en un chunk
             if (!prefixMode) {
                 List<SObject> probe;
                 if (TEST_MODE) {
@@ -57,7 +55,8 @@ public class LeadSyncQueueable implements Queueable, Database.AllowsCallouts {
                         'FROM MUESTRA_FF_Reducidocsv__dlm ' +
                         'WHERE fecha_registro__c = :processDate ' +
                         'ORDER BY uuid__c ASC ' +
-                        'LIMIT :CHUNK_SIZE'
+                        'LIMIT :CHUNK_SIZE',
+                        AccessLevel.SYSTEM_MODE
                     );
                 }
 
@@ -87,7 +86,6 @@ public class LeadSyncQueueable implements Queueable, Database.AllowsCallouts {
                     return;
                 }
 
-                // Si el día trae exactamente CHUNK_SIZE, entra a modo prefijos
                 LeadSyncCursor.updateCursor(
                     DateTime.newInstance(processDate, Time.newInstance(0, 0, 0, 0)),
                     'PFX:0'
@@ -99,7 +97,6 @@ public class LeadSyncQueueable implements Queueable, Database.AllowsCallouts {
                 return;
             }
 
-            // Modo prefijos: procesa buckets del mismo día
             if (String.isBlank(prefix) || !isHexPrefix(prefix)) {
                 prefix = '0';
             }
@@ -117,7 +114,8 @@ public class LeadSyncQueueable implements Queueable, Database.AllowsCallouts {
                     'FROM MUESTRA_FF_Reducidocsv__dlm ' +
                     'WHERE fecha_registro__c = :processDate AND uuid__c LIKE :likePattern ' +
                     'ORDER BY uuid__c ASC ' +
-                    'LIMIT :CHUNK_SIZE'
+                    'LIMIT :CHUNK_SIZE',
+                    AccessLevel.SYSTEM_MODE
                 );
             }
 
@@ -136,7 +134,7 @@ public class LeadSyncQueueable implements Queueable, Database.AllowsCallouts {
                     releaseLock();
                     throw new AuraHandledException(
                         'Bucket demasiado grande para prefix=' + prefix +
-                        '. Subí MAX_PREFIX_DEPTH o revisá distribución de uuid.'
+                        '. Subi MAX_PREFIX_DEPTH o revisa distribucion de uuid.'
                     );
                 }
             }
@@ -181,7 +179,8 @@ public class LeadSyncQueueable implements Queueable, Database.AllowsCallouts {
             'FROM MUESTRA_FF_Reducidocsv__dlm ' +
             'WHERE fecha_registro__c >= :fromDate AND fecha_registro__c != null ' +
             'ORDER BY fecha_registro__c ASC ' +
-            'LIMIT 1'
+            'LIMIT 1',
+            AccessLevel.SYSTEM_MODE
         );
 
         if (r.isEmpty()) return null;
@@ -309,11 +308,11 @@ public class LeadSyncQueueable implements Queueable, Database.AllowsCallouts {
         Schema.SObjectField extIdField = Lead.Fields.id_externo_migracion__c;
 
         if (!leadsConSeller.isEmpty()) {
-            Database.upsert(leadsConSeller, extIdField, false);
+            Database.upsert(leadsConSeller, extIdField, false, AccessLevel.USER_MODE);
         }
 
         if (!leadsSinSeller.isEmpty()) {
-            Database.upsert(leadsSinSeller, extIdField, false);
+            Database.upsert(leadsSinSeller, extIdField, false, AccessLevel.USER_MODE);
         }
     }
 
@@ -335,12 +334,13 @@ public class LeadSyncQueueable implements Queueable, Database.AllowsCallouts {
                 SELECT Id, IsRunning__c
                 FROM Lead_Sync_Cursor__c
                 WHERE Name = 'Main Cursor'
+                WITH SYSTEM_MODE
                 LIMIT 1
                 FOR UPDATE
             ];
 
             cur.IsRunning__c = false;
-            update cur;
+            update as system cur;
         } catch (Exception e) {
             System.debug('No se pudo liberar el lock: ' + e.getMessage());
         }

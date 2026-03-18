@@ -5,15 +5,17 @@ private class LeadSyncQueueableTest {
     static void setupData() {
         insert new Lead_Sync_Cursor__c(
             Name = 'Main Cursor',
-            Last_Processed_Date__c = DateTime.newInstance(2026, 1, 1, 0, 0, 0),
+            Last_Processed_Date__c = DateTime.newInstance(2026, 1, 1, 12, 0, 0),
             IsRunning__c = false
         );
+        insert buildTestUser();
     }
 
     @IsTest
     static void avanzaAlSiguienteDiaCuandoNoHayRowsEnElDia() {
         resetHooks();
         setCursor(Date.newInstance(2026, 1, 1), '');
+        User testUser = getTestUser();
 
         LeadSyncQueueable.TEST_MODE = true;
         LeadSyncQueueable.TEST_DISABLE_REQUEUE = true;
@@ -21,9 +23,11 @@ private class LeadSyncQueueableTest {
         LeadSyncQueueable.TEST_NEXT_AVAILABLE_DATE = Date.newInstance(2026, 1, 5);
         LeadSyncQueueable.TEST_PROBE_ROWS = new List<SObject>();
 
-        Test.startTest();
-        new LeadSyncQueueable().execute(null);
-        Test.stopTest();
+        System.runAs(testUser) {
+            Test.startTest();
+            new LeadSyncQueueable().execute(null);
+            Test.stopTest();
+        }
 
         System.assertEquals(Date.newInstance(2026, 1, 6), LeadSyncCursor.getLastDate().date());
         System.assert(String.isBlank(LeadSyncCursor.getLastUUID()));
@@ -33,6 +37,7 @@ private class LeadSyncQueueableTest {
     static void entraEnModoPrefijosCuandoElChunkLlegaAlLimite() {
         resetHooks();
         setCursor(Date.newInstance(2026, 1, 1), '');
+        User testUser = getTestUser();
 
         LeadSyncQueueable.TEST_MODE = true;
         LeadSyncQueueable.TEST_DISABLE_REQUEUE = true;
@@ -40,9 +45,11 @@ private class LeadSyncQueueableTest {
         LeadSyncQueueable.TEST_NEXT_AVAILABLE_DATE = Date.newInstance(2026, 1, 5);
         LeadSyncQueueable.TEST_PROBE_ROWS = buildDummyRows(2000);
 
-        Test.startTest();
-        new LeadSyncQueueable().execute(null);
-        Test.stopTest();
+        System.runAs(testUser) {
+            Test.startTest();
+            new LeadSyncQueueable().execute(null);
+            Test.stopTest();
+        }
 
         System.assertEquals(Date.newInstance(2026, 1, 5), LeadSyncCursor.getLastDate().date());
         System.assertEquals('PFX:0', LeadSyncCursor.getLastUUID());
@@ -52,15 +59,18 @@ private class LeadSyncQueueableTest {
     static void subdividePrefijoCuandoElBucketSigueLleno() {
         resetHooks();
         setCursor(Date.newInstance(2026, 1, 5), 'PFX:0');
+        User testUser = getTestUser();
 
         LeadSyncQueueable.TEST_MODE = true;
         LeadSyncQueueable.TEST_DISABLE_REQUEUE = true;
         LeadSyncQueueable.TEST_SKIP_UPSERT = true;
         LeadSyncQueueable.TEST_PREFIX_ROWS = buildDummyRows(2000);
 
-        Test.startTest();
-        new LeadSyncQueueable().execute(null);
-        Test.stopTest();
+        System.runAs(testUser) {
+            Test.startTest();
+            new LeadSyncQueueable().execute(null);
+            Test.stopTest();
+        }
 
         System.assertEquals(Date.newInstance(2026, 1, 5), LeadSyncCursor.getLastDate().date());
         System.assertEquals('PFX:00', LeadSyncCursor.getLastUUID());
@@ -70,15 +80,18 @@ private class LeadSyncQueueableTest {
     static void normalizaPrefijoInvalidoYAvanzaAlSiguiente() {
         resetHooks();
         setCursor(Date.newInstance(2026, 1, 5), 'PFX:xyz');
+        User testUser = getTestUser();
 
         LeadSyncQueueable.TEST_MODE = true;
         LeadSyncQueueable.TEST_DISABLE_REQUEUE = true;
         LeadSyncQueueable.TEST_SKIP_UPSERT = true;
         LeadSyncQueueable.TEST_PREFIX_ROWS = new List<SObject>();
 
-        Test.startTest();
-        new LeadSyncQueueable().execute(null);
-        Test.stopTest();
+        System.runAs(testUser) {
+            Test.startTest();
+            new LeadSyncQueueable().execute(null);
+            Test.stopTest();
+        }
 
         System.assertEquals(Date.newInstance(2026, 1, 5), LeadSyncCursor.getLastDate().date());
         System.assertEquals('PFX:1', LeadSyncCursor.getLastUUID());
@@ -88,15 +101,18 @@ private class LeadSyncQueueableTest {
     static void alTerminarUltimoPrefijoAvanzaAlDiaSiguiente() {
         resetHooks();
         setCursor(Date.newInstance(2026, 1, 5), 'PFX:f');
+        User testUser = getTestUser();
 
         LeadSyncQueueable.TEST_MODE = true;
         LeadSyncQueueable.TEST_DISABLE_REQUEUE = true;
         LeadSyncQueueable.TEST_SKIP_UPSERT = true;
         LeadSyncQueueable.TEST_PREFIX_ROWS = new List<SObject>();
 
-        Test.startTest();
-        new LeadSyncQueueable().execute(null);
-        Test.stopTest();
+        System.runAs(testUser) {
+            Test.startTest();
+            new LeadSyncQueueable().execute(null);
+            Test.stopTest();
+        }
 
         System.assertEquals(Date.newInstance(2026, 1, 6), LeadSyncCursor.getLastDate().date());
         System.assert(String.isBlank(LeadSyncCursor.getLastUUID()));
@@ -106,6 +122,7 @@ private class LeadSyncQueueableTest {
     static void procesaRowsEnModoNormalYConstruyeLeadsEsperados() {
         resetHooks();
         setCursor(Date.newInstance(2026, 1, 1), '');
+        User testUser = getTestUser();
 
         LeadSyncQueueable.TEST_MODE = true;
         LeadSyncQueueable.TEST_DISABLE_REQUEUE = true;
@@ -137,9 +154,11 @@ private class LeadSyncQueueableTest {
             }
         };
 
-        Test.startTest();
-        new LeadSyncQueueable().execute(null);
-        Test.stopTest();
+        System.runAs(testUser) {
+            Test.startTest();
+            new LeadSyncQueueable().execute(null);
+            Test.stopTest();
+        }
 
         System.assertEquals(1, LeadSyncQueueable.TEST_CAPTURED_LEADS_WITH_SELLER.size());
         System.assertEquals(1, LeadSyncQueueable.TEST_CAPTURED_LEADS_WITHOUT_SELLER.size());
@@ -164,6 +183,7 @@ private class LeadSyncQueueableTest {
     static void procesaRowsEnModoPrefijoYAvanzaAlSiguientePrefijo() {
         resetHooks();
         setCursor(Date.newInstance(2026, 1, 5), 'PFX:a');
+        User testUser = getTestUser();
 
         LeadSyncQueueable.TEST_MODE = true;
         LeadSyncQueueable.TEST_DISABLE_REQUEUE = true;
@@ -205,9 +225,11 @@ private class LeadSyncQueueableTest {
             }
         };
 
-        Test.startTest();
-        new LeadSyncQueueable().execute(null);
-        Test.stopTest();
+        System.runAs(testUser) {
+            Test.startTest();
+            new LeadSyncQueueable().execute(null);
+            Test.stopTest();
+        }
 
         System.assertEquals(2, LeadSyncQueueable.TEST_CAPTURED_LEADS_WITH_SELLER.size());
         System.assertEquals(1, LeadSyncQueueable.TEST_CAPTURED_LEADS_WITHOUT_SELLER.size());
@@ -224,6 +246,7 @@ private class LeadSyncQueueableTest {
     static void liberaLockCuandoNoHayMasFechasParaProcesar() {
         resetHooks();
         setCursor(Date.newInstance(2026, 1, 5), '');
+        User testUser = getTestUser();
 
         LeadSyncQueueable.TEST_MODE = true;
         LeadSyncQueueable.TEST_DISABLE_REQUEUE = true;
@@ -239,9 +262,11 @@ private class LeadSyncQueueableTest {
         cursor.IsRunning__c = true;
         update cursor;
 
-        Test.startTest();
-        new LeadSyncQueueable().execute(null);
-        Test.stopTest();
+        System.runAs(testUser) {
+            Test.startTest();
+            new LeadSyncQueueable().execute(null);
+            Test.stopTest();
+        }
 
         Lead_Sync_Cursor__c refreshed = [
             SELECT Id, IsRunning__c
@@ -255,6 +280,7 @@ private class LeadSyncQueueableTest {
     static void liberaLockYLanzaErrorSiElSubbucketMasProfundoSigueLleno() {
         resetHooks();
         setCursor(Date.newInstance(2026, 1, 5), 'PFX:ff');
+        User testUser = getTestUser();
 
         LeadSyncQueueable.TEST_MODE = true;
         LeadSyncQueueable.TEST_DISABLE_REQUEUE = true;
@@ -270,14 +296,16 @@ private class LeadSyncQueueableTest {
         cursor.IsRunning__c = true;
         update cursor;
 
-        Test.startTest();
-        try {
-            new LeadSyncQueueable().execute(null);
-            System.assert(false, 'Debio lanzar una AuraHandledException.');
-        } catch (AuraHandledException e) {
-            System.assertNotEquals(null, e);
+        System.runAs(testUser) {
+            Test.startTest();
+            try {
+                new LeadSyncQueueable().execute(null);
+                System.assert(false, 'Debio lanzar una AuraHandledException.');
+            } catch (AuraHandledException e) {
+                System.assertNotEquals(null, e);
+            }
+            Test.stopTest();
         }
-        Test.stopTest();
 
         Lead_Sync_Cursor__c refreshed = [
             SELECT Id, IsRunning__c
@@ -289,7 +317,7 @@ private class LeadSyncQueueableTest {
 
     private static void setCursor(Date cursorDate, String token) {
         LeadSyncCursor.updateCursor(
-            DateTime.newInstance(cursorDate, Time.newInstance(0, 0, 0, 0)),
+            DateTime.newInstance(cursorDate, Time.newInstance(12, 0, 0, 0)),
             token
         );
     }
@@ -312,5 +340,46 @@ private class LeadSyncQueueableTest {
             rows.add(new Lead_Sync_Cursor__c(Name = 'Dummy ' + i));
         }
         return rows;
+    }
+
+    private static User buildTestUser() {
+        String unique = String.valueOf(DateTime.now().getTime());
+        User testUser = new User(
+            Alias = 'tusr',
+            Email = 'testuser+' + unique + '@example.com',
+            EmailEncodingKey = 'UTF-8',
+            LastName = 'Test',
+            LanguageLocaleKey = 'en_US',
+            LocaleSidKey = 'en_US',
+            ProfileId = UserInfo.getProfileId(),
+            TimeZoneSidKey = 'America/Los_Angeles',
+            UserName = 'testuser+' + unique + '@example.com'
+        );
+
+        applyOrgSpecificUserDefaults(testUser);
+        return testUser;
+    }
+
+    private static User getTestUser() {
+        return [SELECT Id FROM User WHERE Alias = 'tusr' LIMIT 1];
+    }
+
+    private static void applyOrgSpecificUserDefaults(User testUser) {
+        Map<String, Schema.SObjectField> userFields = Schema.SObjectType.User.fields.getMap();
+        if (!userFields.containsKey('Business_Unit__c')) {
+            return;
+        }
+
+        Schema.DescribeFieldResult fieldDescribe = userFields.get('Business_Unit__c').getDescribe();
+        if (fieldDescribe.getType() == Schema.DisplayType.Picklist) {
+            for (Schema.PicklistEntry entry : fieldDescribe.getPicklistValues()) {
+                if (entry.isActive()) {
+                    testUser.put('Business_Unit__c', entry.getValue());
+                    return;
+                }
+            }
+        }
+
+        testUser.put('Business_Unit__c', 'Default');
     }
 }
